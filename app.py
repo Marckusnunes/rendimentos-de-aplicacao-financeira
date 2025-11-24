@@ -19,7 +19,7 @@ st.markdown("""
     .main { background-color: #f8f9fa; }
     h1 { color: #2c3e50; }
     div.stButton > button {
-        background-color: #003399; /* Azul estilo BB/Caixa para ficar profissional */
+        background-color: #003399;
         color: white;
         border: none;
         padding: 10px 24px;
@@ -31,11 +31,26 @@ st.markdown("""
         background-color: #002266;
         color: white;
     }
+    /* Ajuste para alinhar métricas */
+    [data-testid="stMetricValue"] {
+        font-size: 1.5rem;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- FUNÇÕES AUXILIARES DE LIMPEZA ---
+# --- FUNÇÃO DE FORMATAÇÃO (BR) ---
+def formatar_moeda_br(valor):
+    """
+    Recebe um float (ex: 1234.56) e retorna string BR (ex: R$ 1.234,56)
+    """
+    if valor is None:
+        return "R$ 0,00"
+    # Formata como padrão US primeiro (1,234.56)
+    s = f"{valor:,.2f}"
+    # Troca vírgula por X, ponto por vírgula, X por ponto
+    return f"R$ {s.replace(',', 'X').replace('.', ',').replace('X', '.')}"
 
+# --- FUNÇÕES AUXILIARES DE LIMPEZA ---
 def limpar_valor_caixa(valor_str):
     if not valor_str: return 0.0
     valor_limpo = valor_str.strip().upper()
@@ -51,14 +66,12 @@ def limpar_valor_geral(valor_str):
         except ValueError: return 0.0
     return 0.0
 
-# --- FUNÇÕES DE PROCESSAMENTO POR BANCO ---
+# --- FUNÇÕES DE PROCESSAMENTO ---
 
 @st.cache_data(show_spinner=False)
 def processar_caixa(arquivo_bytes, nome_arquivo):
-    """Processa extratos da CAIXA ECONÔMICA"""
     try:
         doc = fitz.open(stream=arquivo_bytes, filetype="pdf")
-        # Caixa geralmente tem o resumo na primeira página
         texto_completo = doc[0].get_text()
         doc.close()
 
@@ -82,13 +95,11 @@ def processar_caixa(arquivo_bytes, nome_arquivo):
 
 @st.cache_data(show_spinner=False)
 def processar_bb(arquivo_bytes, nome_arquivo):
-    """Processa extratos do BANCO DO BRASIL (Antigo Padrão 2)"""
     try:
         doc = fitz.open(stream=arquivo_bytes, filetype="pdf")
         texto_completo = "".join([pag.get_text() for pag in doc])
         doc.close()
 
-        # Função auxiliar para buscar com ou sem aspas (padrões variados do BB)
         def busca_dupla(padrao1, padrao2, txt):
             m = re.search(padrao1, txt)
             return m if m else re.search(padrao2, txt)
@@ -118,37 +129,23 @@ def processar_bb(arquivo_bytes, nome_arquivo):
     except Exception as e:
          return {"Nome do Arquivo": nome_arquivo, "Banco": "BB", "Conta": f"Erro: {str(e)}", "Saldo Atual": 0.0}
 
-# --- BARRA LATERAL (MENU) ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.title("Menu")
     st.info("ℹ️ **Como usar:**\n\n1. Selecione o Banco.\n2. Arraste os arquivos PDF.\n3. Clique em Iniciar.\n4. Baixe o Excel.")
-    
     st.divider()
-    
-    # Aqui está a mudança solicitada
-    tipo_extrato = st.selectbox(
-        "Selecione o Banco:",
-        ["Extrato CAIXA", "Extrato BB"],
-        index=0
-    )
+    tipo_extrato = st.selectbox("Selecione o Banco:", ["Extrato CAIXA", "Extrato BB"], index=0)
 
 # --- ÁREA PRINCIPAL ---
-
 st.title("📊 Consolidador de Extratos")
 st.markdown(f"Importação e análise de dados para: **{tipo_extrato}**")
 st.divider()
 
 col_upload, col_btn = st.columns([3, 1])
-
 with col_upload:
-    arquivos_carregados = st.file_uploader(
-        "Carregue os arquivos PDF:", 
-        type=["pdf"], 
-        accept_multiple_files=True
-    )
-
+    arquivos_carregados = st.file_uploader("Carregue os arquivos PDF:", type=["pdf"], accept_multiple_files=True)
 with col_btn:
-    st.write("") # Espaçamento para alinhar o botão visualmente
+    st.write("") 
     st.write("") 
     if arquivos_carregados:
         botao_processar = st.button("▶️ Iniciar", type="primary")
@@ -159,16 +156,13 @@ if botao_processar and arquivos_carregados:
     
     dados_consolidados = []
     barra = st.progress(0, text="Lendo arquivos...")
-    start_time = time.time()
-
+    
     for i, arquivo in enumerate(arquivos_carregados):
         bytes_arquivo = arquivo.read()
-        
-        # Seleção da lógica baseada no Menu
         if tipo_extrato == "Extrato CAIXA":
             dados = processar_caixa(bytes_arquivo, arquivo.name)
         else:
-            dados = processar_bb(bytes_arquivo, arquivo.name) # Chama a função renomeada
+            dados = processar_bb(bytes_arquivo, arquivo.name)
         
         dados_consolidados.append(dados)
         barra.progress((i + 1) / len(arquivos_carregados), text=f"Processando {i+1}/{len(arquivos_carregados)}")
@@ -182,25 +176,26 @@ if botao_processar and arquivos_carregados:
     st.divider()
     st.subheader("📈 Resultado Consolidado")
     
-    # Métricas
+    # Métricas (Usando a função formatar_moeda_br)
     total_saldo = df["Saldo Atual"].sum()
     total_rendimento = df["Rendimento"].sum()
     total_contas = df["Conta"].nunique()
 
     k1, k2, k3 = st.columns(3)
-    k1.metric("Saldo Total", f"R$ {total_saldo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    k2.metric("Rendimento Total", f"R$ {total_rendimento:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    k1.metric("Saldo Total", formatar_moeda_br(total_saldo))
+    k2.metric("Rendimento Total", formatar_moeda_br(total_rendimento))
     k3.metric("Contas Únicas", total_contas)
 
     # Abas
     tab1, tab2 = st.tabs(["Tabela", "Gráfico"])
 
     with tab1:
+        # Aplicando formatação visual na Tabela do Streamlit
         st.dataframe(
             df.style.format({
-                "Saldo Anterior": "R$ {:,.2f}", 
-                "Rendimento": "R$ {:,.2f}", 
-                "Saldo Atual": "R$ {:,.2f}"
+                "Saldo Anterior": formatar_moeda_br,
+                "Rendimento": formatar_moeda_br,
+                "Saldo Atual": formatar_moeda_br
             }),
             use_container_width=True,
             height=400
